@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diabetes Risk Predictor (ANN)</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#1d2430;--muted:#667085;--line:#e1e5ea;--accent:#2563eb;--good:#16a34a;--bad:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#12151a;--card:#1b2028;--text:#e8ebf0;--muted:#98a2b3;--line:#2c333d;--accent:#5b8cff;--good:#34d399;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 16px 48px}
+h1{font-size:1.6rem;margin:0 0 4px}
+p.sub{color:var(--muted);margin:0 0 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px}
+label{display:block;font-size:.85rem;color:var(--muted);margin-bottom:4px}
+input,select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);font:inherit}
+button{margin-top:20px;width:100%;padding:12px;border:0;border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:600;cursor:pointer}
+button:hover{opacity:.92}
+#result{margin-top:20px;display:none}
+.bar{height:14px;background:var(--line);border-radius:7px;overflow:hidden;margin:10px 0}
+.bar>div{height:100%;width:0;transition:width .4s}
+.big{font-size:1.4rem;font-weight:700}
+.note{color:var(--muted);font-size:.8rem;margin-top:16px}
+#err{color:var(--bad);margin-top:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>Diabetes Risk Predictor</h1>
+<p class="sub">An ANN trained on the CDC Diabetes Health Indicators dataset. Fill in the form and press Predict.</p>
+<form id="f" class="card" autocomplete="off">
+  <div class="grid" id="fields"></div>
+  <button type="submit">Predict</button>
+  <div id="err"></div>
+</form>
+<div id="result" class="card">
+  <div class="big" id="label"></div>
+  <div class="bar"><div id="fill"></div></div>
+  <div id="prob"></div>
+</div>
+<p class="note">Educational project, not medical advice. The model runs entirely in your browser; nothing is sent anywhere.</p>
+</main>
+<script>
+const MODEL = /*MODEL_JSON*/null;
+
+const YN = [[0,"No"],[1,"Yes"]];
+const FIELDS = {
+  HighBP:["High blood pressure",YN], HighChol:["High cholesterol",YN],
+  CholCheck:["Cholesterol check in last 5 years",YN],
+  BMI:["Body Mass Index (BMI)","number",10,80,27],
+  Smoker:["Smoked 100+ cigarettes in lifetime",YN], Stroke:["Ever had a stroke",YN],
+  HeartDiseaseorAttack:["Heart disease or heart attack",YN],
+  PhysActivity:["Physical activity in past 30 days",YN],
+  Fruits:["Eats fruit daily",YN], Veggies:["Eats vegetables daily",YN],
+  HvyAlcoholConsump:["Heavy alcohol consumption",YN],
+  AnyHealthcare:["Has health coverage",YN], NoDocbcCost:["Skipped doctor due to cost",YN],
+  GenHlth:["General health",[[1,"1 - Excellent"],[2,"2 - Very good"],[3,"3 - Good"],[4,"4 - Fair"],[5,"5 - Poor"]]],
+  MentHlth:["Bad mental-health days (0-30)","number",0,30,0],
+  PhysHlth:["Bad physical-health days (0-30)","number",0,30,0],
+  DiffWalk:["Difficulty walking or climbing stairs",YN],
+  Sex:["Sex",[[0,"Female"],[1,"Male"]]],
+  Age:["Age group",["18-24","25-29","30-34","35-39","40-44","45-49","50-54","55-59","60-64","65-69","70-74","75-79","80+"].map((t,i)=>[i+1,t])],
+  Education:["Education",[[1,"Never attended / kindergarten"],[2,"Elementary"],[3,"Some high school"],[4,"High school graduate"],[5,"Some college"],[6,"College graduate"]]],
+  Income:["Annual income",[[1,"< $10k"],[2,"$10-15k"],[3,"$15-20k"],[4,"$20-25k"],[5,"$25-35k"],[6,"$35-50k"],[7,"$50-75k"],[8,"$75k+"]]]
+};
+const DEFAULTS = {CholCheck:1,PhysActivity:1,AnyHealthcare:1,GenHlth:3,Age:6,Education:5,Income:6,Veggies:1};
+
+const box = document.getElementById("fields");
+const names = MODEL ? MODEL.features : Object.keys(FIELDS);
+names.forEach(n=>{
+  const d = FIELDS[n]; if(!d) return;
+  const w = document.createElement("div");
+  let h = `<label for="${n}">${d[0]}</label>`;
+  if(d[1]==="number") h += `<input id="${n}" type="number" min="${d[2]}" max="${d[3]}" step="any" value="${d[4]}" required>`;
+  else h += `<select id="${n}">` + d[1].map(([v,t])=>`<option value="${v}"${(DEFAULTS[n]??0)==v?" selected":""}>${t}</option>`).join("") + `</select>`;
+  w.innerHTML = h; box.appendChild(w);
+});
+
+function forward(x){
+  let a = x;
+  for(const L of MODEL.layers){
+    const out = L.bias.map((b,j)=>{ let s=b; for(let i=0;i<a.length;i++) s+=a[i]*L.kernel[i][j]; return s; });
+    if(L.activation==="relu") a = out.map(v=>Math.max(0,v));
+    else if(L.activation==="sigmoid") a = out.map(v=>1/(1+Math.exp(-v)));
+    else if(L.activation==="softmax"){ const m=Math.max(...out), e=out.map(v=>Math.exp(v-m)), s=e.reduce((p,c)=>p+c,0); a=e.map(v=>v/s); }
+    else a = out;
+  }
+  return a;
+}
+function predict(values){
+  const z = MODEL.features.map((n,i)=>(values[n]-MODEL.mean[i])/MODEL.scale[i]);
+  return forward(z)[0];
+}
+document.getElementById("f").addEventListener("submit",e=>{
+  e.preventDefault();
+  const err = document.getElementById("err"); err.textContent="";
+  if(!MODEL){ err.textContent="No model embedded. Run the notebook's website cell to generate index.html."; return; }
+  const v = {}; MODEL.features.forEach(n=>v[n]=parseFloat(document.getElementById(n).value));
+  const p = predict(v), thr = MODEL.threshold ?? 0.5, high = p>=thr;
+  document.getElementById("result").style.display="block";
+  const lab = document.getElementById("label");
+  lab.textContent = high ? "Higher diabetes risk" : "Lower diabetes risk";
+  lab.style.color = high ? "var(--bad)" : "var(--good)";
+  const fill = document.getElementById("fill");
+  fill.style.width = (p*100).toFixed(1)+"%"; fill.style.background = high ? "var(--bad)" : "var(--good)";
+  document.getElementById("prob").textContent = `Model probability: ${(p*100).toFixed(1)}% (decision threshold ${(thr*100).toFixed(0)}%)`;
+});
+if(typeof module!=="undefined") module.exports={predict,forward};
+</script>
+</body>
+</html>
